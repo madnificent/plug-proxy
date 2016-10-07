@@ -9,14 +9,26 @@ defmodule PlugProxy.Transport.Cowboy do
   alias PlugProxy.BadGatewayError
   alias PlugProxy.GatewayTimeoutError
 
+  defp exec_step( conn, command, args ) do
+    functor_args = args ++ [conn.processors.state]
+    functor = Map.get( conn.processors, command )
+    { content, state } = apply( functor, functor_args )
+
+    processors = Map.put( conn.processors, :state, state )
+    conn = Map.put( conn, :processors, processors )
+    { content, conn }
+  end
+
   def write(conn, client, opts) do
     case read_body(conn, []) do
       {:ok, body, conn} ->
+        { body, conn } = exec_step( conn, :body_processor, [body] )
         :hackney.send_body(client, body)
         :hackney.finish_send_body(client)
         conn
 
       {:more, body, conn} ->
+        { body, conn } = exec_step( conn, :chunk_processor, [body] )
         :hackney.send_body(client, body)
         write(conn, client, opts)
 
@@ -28,9 +40,10 @@ defmodule PlugProxy.Transport.Cowboy do
     end
   end
 
-  def read(conn, client, _) do
+  def read(conn, client, _opts) do
     case :hackney.start_response(client) do
       {:ok, status, headers, client} ->
+        { headers, conn } = exec_step( conn, :header_processor, [headers] )
         {headers, length} = process_headers(headers)
 
         %{conn | status: status}
@@ -95,10 +108,12 @@ defmodule PlugProxy.Transport.Cowboy do
   defp chunked_reply(conn, client, req) do
     case :hackney.stream_body(client) do
       {:ok, data} ->
+        { data, conn } = exec_step( conn, :chunk_processor, [data] )
         :cowboy_req.chunk(data, req)
         chunked_reply(conn, client, req)
 
       :done ->
+        { _, conn } = exec_step( conn, :finish_hook, [] )
         :ok
 
       {:error, _reason} ->
@@ -110,10 +125,12 @@ defmodule PlugProxy.Transport.Cowboy do
   defp stream_reply(conn, client, socket, transport) do
     case :hackney.stream_body(client) do
       {:ok, data} ->
+        { data, conn } = exec_step( conn, :chunk_processor, [data] )
         transport.send(socket, data)
         stream_reply(conn, client, socket, transport)
 
       :done ->
+        { _, conn } = exec_step( conn, :finish_hook, [] )
         :ok
 
       {:error, _reason} ->
