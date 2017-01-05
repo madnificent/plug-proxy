@@ -100,6 +100,7 @@ defmodule PlugProxy.Transport.Cowboy do
     end
 
     conn = before_send(conn, headers, :set)
+
     {adapter, req} = conn.adapter
     {:ok, req} = :cowboy_req.reply(conn.status, conn.resp_headers, :cowboy_req.set_resp_body_fun(length, body_fun, req))
     %{conn | adapter: {adapter, req}, state: :sent}
@@ -140,7 +141,21 @@ defmodule PlugProxy.Transport.Cowboy do
   end
 
   defp before_send(%Plug.Conn{before_send: before_send} = conn, headers, state) do
-    conn = %{conn | resp_headers: headers, state: state}
-    Enum.reduce(before_send, conn, &(&1.(&2)))
+    # pass headers
+    conn = %{conn | resp_headers: # conn.resp_headers ++
+              headers, state: state}
+
+    # run hooks
+    conn = Enum.reduce(before_send, conn, &(&1.(&2)))
+
+    # cookies
+    if Map.has_key?( conn, :resp_cookies ) do
+      headers = Enum.reduce conn.resp_cookies, conn.resp_headers, fn {key, opts}, acc ->
+        [{"set-cookie", Plug.Conn.Cookies.encode(key, opts)} | acc]
+      end
+      conn = %{conn | resp_headers: headers}
+    else
+      conn
+    end
   end
 end
