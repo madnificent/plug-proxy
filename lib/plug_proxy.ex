@@ -71,6 +71,7 @@ defmodule PlugProxy do
   defp send_req(conn, opts) do
     url_fun = Keyword.get(opts, :url, &format_url/2)
     url = get_url(url_fun, conn, opts)
+    opts = [ {:recv_timeout, 1500000000} | opts ]
 
     :hackney.request(method_atom(conn.method), url, prepare_headers(conn), :stream, opts)
   end
