@@ -12,7 +12,16 @@ defmodule PlugProxy.Transport.Cowboy do
   defp exec_step( conn, command, args ) do
     functor_args = args ++ [conn.processors.state]
     functor = Map.get( conn.processors, command )
-    { content, state } = apply( functor, functor_args )
+
+    # the response may be { content, state } or
+    # { content, state, conn }.  This allows sharing the connection
+    # and altering it in the functor.
+    functor_response = apply( functor, functor_args )
+    { content, state, conn } =
+      case functor_response do
+        { content, state } -> { content, state, conn }
+        { content, state, conn } -> { content, state, conn }
+      end
 
     processors = Map.put( conn.processors, :state, state )
     conn = Map.put( conn, :processors, processors )
@@ -43,8 +52,8 @@ defmodule PlugProxy.Transport.Cowboy do
   def read(conn, client, _opts) do
     case :hackney.start_response(client) do
       {:ok, status, headers, client} ->
-        { headers, conn } = exec_step( conn, :header_processor, [headers] )
-        {headers, length} = process_headers(headers)
+        { headers, conn } = exec_step( conn, :header_processor, [headers,conn] )
+        { headers, length } = process_headers(headers)
 
         %{conn | status: status}
         |> reply(client, headers, length)
