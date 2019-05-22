@@ -9,7 +9,7 @@ defmodule PlugProxy do
 
     - `:upstream` - Upstream URL string. Additional path and query string will be prefixed.
     - `:url` - URL string or a function which returns an URL.
-    - `:transport` - Transport module. Default to `PlugProxy.Transport.Cowboy`.
+    - `:transport` - Transport module. Default to `PlugProxy.Transport.Common`.
 
   Additional options will be passed to hackney. You can see [:hackney.request/5](https://github.com/benoitc/hackney/blob/master/doc/hackney.md#request5)
   for available options.
@@ -46,13 +46,15 @@ defmodule PlugProxy do
 
   @methods ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
 
+  @impl true
   def init(opts) do
     opts
     |> parse_upstream(Keyword.get(opts, :upstream))
   end
 
+  @impl true
   def call(conn, opts) do
-    transport = Keyword.get(opts, :transport, PlugProxy.Transport.Cowboy)
+    transport = Keyword.get_lazy(opts, :transport, fn -> default_transport(conn) end)
 
     case send_req(conn, opts) do
       {:ok, client} ->
@@ -65,7 +67,16 @@ defmodule PlugProxy do
   end
 
   for method <- @methods do
-    defp method_atom(unquote(method)), do: unquote(method |> String.downcase |> String.to_atom)
+    defp method_atom(unquote(method)),
+      do: unquote(method |> String.downcase() |> String.to_atom())
+  end
+
+  defp default_transport(%Plug.Conn{adapter: {Plug.Adapters.Cowboy.Conn, _}}) do
+    PlugProxy.Transport.Cowboy
+  end
+
+  defp default_transport(_) do
+    PlugProxy.Transport.Common
   end
 
   defp send_req(conn, opts) do
@@ -78,8 +89,7 @@ defmodule PlugProxy do
 
   defp parse_upstream(opts, upstream) when is_binary(upstream) do
     uri = URI.parse(upstream)
-    uri = %{uri | query: uri.query || "",
-                  path: String.replace_trailing(uri.path || "", "/", "")}
+    uri = %{uri | query: uri.query || "", path: String.replace_trailing(uri.path || "", "/", "")}
 
     Keyword.put(opts, :upstream, uri)
   end

@@ -5,9 +5,10 @@ defmodule PlugProxy.Transport.Cowboy do
 
   @behaviour PlugProxy.Transport
 
+  use PlugProxy.Transport
+  import PlugProxy.Response, only: [process_headers: 1, chunked_reply: 2, before_send: 2]
   import Plug.Conn, only: [read_body: 2]
-  alias PlugProxy.BadGatewayError
-  alias PlugProxy.GatewayTimeoutError
+  alias PlugProxy.{BadGatewayError, GatewayTimeoutError}
 
   defp exec_step( conn, command, args ) do
     functor_args = args ++ [conn.processors.state]
@@ -49,14 +50,15 @@ defmodule PlugProxy.Transport.Cowboy do
     end
   end
 
+  @impl true
   def read(conn, client, _opts) do
     case :hackney.start_response(client) do
       {:ok, status, headers, client} ->
         { headers, conn } = exec_step( conn, :header_processor, [headers,conn] )
         { headers, length } = process_headers(headers)
 
-        %{conn | status: status}
-        |> reply(client, headers, length)
+        %{conn | status: status, resp_headers: headers}
+        |> reply(client, length)
 
       {:error, :timeout} ->
         raise GatewayTimeoutError, reason: :read
@@ -66,54 +68,17 @@ defmodule PlugProxy.Transport.Cowboy do
     end
   end
 
-  defp process_headers(headers) do
-    process_headers(headers, [], 0)
+  defp reply(conn, client, :chunked) do
+    chunked_reply(conn, client)
   end
 
-  defp process_headers([], acc, length) do
-    {Enum.reverse(acc), length}
-  end
-
-  defp process_headers([{key, value} | tail], acc, length) do
-    process_headers(String.downcase(key), value, tail, acc, length)
-  end
-
-  defp process_headers("content-length", value, headers, acc, length) do
-    length = case Integer.parse(value) do
-      {int, ""} -> int
-      _ -> length
-    end
-
-    process_headers(headers, acc, length)
-  end
-
-  defp process_headers("transfer-encoding", "chunked", headers, acc, _) do
-    process_headers(headers, acc, :chunked)
-  end
-
-  defp process_headers(key, value, headers, acc, length) do
-    process_headers(headers, [{key, value} | acc], length)
-  end
-
-  defp reply(conn, client, headers, :chunked) do
-    conn = before_send(conn, headers, :chunked)
-    {adapter, req} = conn.adapter
-    {:ok, req} = :cowboy_req.chunked_reply(conn.status, conn.resp_headers, req)
-    chunked_reply(conn, client, req)
-    %{conn | adapter: {adapter, req}}
-  end
-
-  defp reply(conn, client, headers, length) do
-    body_fun = fn(socket, transport) ->
+  defp reply(conn, client, length) do
+    body_fun = fn socket, transport ->
       stream_reply(conn, client, socket, transport)
     end
 
     conn = before_send(conn, headers, :set)
-
     {adapter, req} = conn.adapter
-    {:ok, req} = :cowboy_req.reply(conn.status, conn.resp_headers, :cowboy_req.set_resp_body_fun(length, body_fun, req))
-    %{conn | adapter: {adapter, req}, state: :sent}
-  end
 
   defp chunked_reply(conn, client, req) do
     case :hackney.stream_body(client) do
