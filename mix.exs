@@ -27,8 +27,8 @@ defmodule PlugProxy.Mixfile do
   defp elixirc_paths(_),     do: ["lib"]
 
   defp deps do
-    [{:cowboy, "~> 1.0"},
-     {:plug, "~> 1.0"},
+    [{:plug_cowboy, "~> 2.1"},
+     {:plug, "~> 1.7"},
      {:hackney, "~> 1.6"},
      {:ex_doc, "~> 0.12", only: :docs},
      {:excoveralls, "~> 0.5", only: :test},
